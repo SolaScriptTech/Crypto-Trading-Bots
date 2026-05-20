@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-kraken_bull_bot_live.py  v3.0
+kraken_bull_bot.py  v3.0
 ============================================================
 Live trading bot — exact logic from backtest v2.1
 ============================================================
@@ -28,11 +28,8 @@ RUN:
 .env (same directory as script):
   KRAKEN_API_KEY=your_key
   KRAKEN_API_SECRET=your_secret
-  PAPER_MODE=true       # default true — live prices, simulated orders
-  PAPER_EQUITY=100.0    # simulated starting equity in paper mode ONLY — ignored in live mode
-  # In live mode equity is always fetched from Kraken on boot
-  DRY_RUN=false         # ignored when PAPER_MODE=true
-  EQUITY_USD=0          # 0 = use live balance (ignored in paper mode)
+  DRY_RUN=false
+  EQUITY_USD=0          # 0 = use live balance
   MAX_DRAWDOWN_PCT=0.20
 """
 
@@ -64,18 +61,18 @@ BASE_DIR        = Path(__file__).resolve().parent
 
 SYMBOLS = [
     "XXBTZUSD", "XETHZUSD", "SOLUSD",  "XXRPZUSD",
-    "AVAXUSD",  "DOTUSD",   "XDGUSD",  "TAOUSD",
-    "FETUSD",   "RNDRUSD",
+    "AVAXUSD",  "DOTUSD",   "BONKUSD", "ARBUSD",
+    "PEPEUSD",  "XDGUSD",
 ]
 
 LABEL = {
     "XXBTZUSD":"BTC/USD",  "XETHZUSD":"ETH/USD",  "SOLUSD":"SOL/USD",
     "XXRPZUSD":"XRP/USD",  "AVAXUSD":"AVAX/USD",  "DOTUSD":"DOT/USD",
-    "XDGUSD":"DOGE/USD",   "TAOUSD":"TAO/USD",    "FETUSD":"FET/USD",
-    "RNDRUSD":"RNDR/USD",
+    "BONKUSD":"BONK/USD",  "ARBUSD":"ARB/USD",    "PEPEUSD":"PEPE/USD",
+    "XDGUSD":"DOGE/USD",
 }
 
-# Starting equity: live mode reads from Kraken API, paper mode reads PAPER_EQUITY from .env
+START_EQUITY    = 0.0
 DRY_POWDER      = 0.20
 SIZE_HIGH       = 0.25      # idle guard entries
 SIZE_LOW        = 0.15      # normal entries
@@ -409,21 +406,18 @@ def check_trail(pos: dict, current_price: float) -> tuple:
 # ============================================================
 
 class State:
-    def __init__(self, base: Path, paper_mode: bool = False, paper_equity: float = 100.0):
+    def __init__(self, base: Path):
         self.path_state  = base / "state.json"
         self.path_events = base / "events.log"
         self.path_audit  = base / "audit.csv"
-        self.paper_mode  = paper_mode
-        self.equity      = paper_equity if paper_mode else 0.0
-        self.peak        = paper_equity if paper_mode else 0.0
-        self.positions   = {}
-        self.cooldowns   = {}
+        self.equity      = 0.0
+        self.peak        = 0.0
+        self.positions   = {}   # sym -> position dict
+        self.cooldowns   = {}   # sym -> bar_idx expiry
         self.trades      = 0
         self.wins        = 0
         self.total_pnl   = 0.0
         self.last_entry_bar = -1
-        self._paper_cash    = paper_equity   # tracks cash in paper mode only
-        self._live_peak_seeded = False       # True once real balance seeds the peak
         self._load()
         self._init_audit()
 
@@ -483,8 +477,6 @@ class State:
             self.wins            = j.get("wins",           0)
             self.total_pnl       = j.get("total_pnl",      0.0)
             self.last_entry_bar  = j.get("last_entry_bar", -1)
-            self._paper_cash     = j.get("paper_cash",     self._paper_cash)
-            self._live_peak_seeded = j.get("live_peak_seeded", False)
             self.positions       = j.get("positions",      {})
             self.cooldowns       = j.get("cooldowns",      {})
         except Exception as e:
@@ -496,8 +488,6 @@ class State:
             "trades": self.trades, "wins": self.wins,
             "total_pnl": self.total_pnl,
             "last_entry_bar": self.last_entry_bar,
-            "paper_cash": self._paper_cash,
-            "live_peak_seeded": self._live_peak_seeded,
             "positions": self.positions,
             "cooldowns": self.cooldowns,
             "saved_at": self._ts(),
@@ -535,63 +525,36 @@ def main():
     env = load_env(BASE_DIR / ".env")
     api_key    = env.get("KRAKEN_API_KEY", "")
     api_secret = env.get("KRAKEN_API_SECRET", "")
-    paper_mode = env.get("PAPER_MODE",     "true").lower()  in ("true","1","yes")
-    paper_eq   = float(env.get("PAPER_EQUITY",    "100.0"))
-    dry_run    = env.get("DRY_RUN",        "false").lower() in ("true","1","yes")
-    equity_cap = float(env.get("EQUITY_USD",       "0"))
+    dry_run    = env.get("DRY_RUN", "false").lower() in ("true", "1", "yes")
+    equity_cap = float(env.get("EQUITY_USD", "0"))
     max_dd     = float(env.get("MAX_DRAWDOWN_PCT", "0.20"))
-
-    # PAPER_MODE forces dry_run — no real orders under any circumstance
-    if paper_mode: dry_run = True
 
     if not api_key or not api_secret:
         sys.exit("FATAL: KRAKEN_API_KEY or KRAKEN_API_SECRET missing from .env")
-
-    if paper_mode:
-        print("╔══════════════════════════════════════════════════════╗")
-        print("║   PAPER MODE — live prices, simulated orders         ║")
-        print(f"║   Starting equity: ${paper_eq:.2f}                        ║")
-        print("║   Set PAPER_MODE=false in .env to trade for real     ║")
-        print("╚══════════════════════════════════════════════════════╝\n")
-    elif dry_run:
+    if dry_run:
         print("*** DRY RUN — no real orders ***\n")
 
     api   = KrakenAPI(api_key, api_secret, dry_run)
-    state = State(BASE_DIR, paper_mode=paper_mode, paper_equity=paper_eq)
+    state = State(BASE_DIR)
 
-    # ── Fetch live balance (skipped in paper mode) ───────
+    # ── Fetch live balance ─────────────────────────────────
     print("Connecting to Kraken API...")
-    if paper_mode:
-        # Paper mode: use simulated equity, still verify API connectivity
+    for attempt in range(10):
         try:
-            api.fetch_balance()   # connectivity check only
+            balance = api.fetch_balance()
+            break
         except Exception as e:
-            print(f"  WARNING: API connectivity check failed: {e}")
-        balance = state.equity   # use paper equity
-        print(f"  Paper mode: simulated equity = ${balance:.2f}")
-    else:
-        for attempt in range(10):
-            try:
-                balance = api.fetch_balance()
-                break
-            except Exception as e:
-                print(f"  Balance fetch attempt {attempt+1}/10: {e}")
-                if attempt == 9: sys.exit("FATAL: Cannot reach Kraken API")
-                time.sleep(30)
-        if equity_cap > 0: balance = min(balance, equity_cap)
-        state.equity = balance
-        # In live mode, always seed peak from real balance on boot.
-        # This ensures drawdown % is relative to actual account value,
-        # not a hardcoded constant or stale state.json value.
-        state.peak   = balance
-        state._live_peak_seeded = True
-        state._save()
+            print(f"  Balance fetch attempt {attempt+1}/10: {e}")
+            if attempt == 9: sys.exit("FATAL: Cannot reach Kraken API")
+            time.sleep(30)
 
-    mode_str = "PAPER" if paper_mode else "LIVE"
-    if not paper_mode:
-        print(f"  Live mode: equity will be read from Kraken (not from any config value)")
-    state.log(f"=== BOT START | mode={mode_str}"
-              f" | equity=${state.equity:.2f}"
+    if equity_cap > 0: balance = min(balance, equity_cap)
+    state.equity = balance
+    if balance > state.peak: state.peak = balance
+    state._save()
+
+    state.log(f"=== BOT START | equity=${balance:.2f}"
+              f" | dry_run={'YES' if dry_run else 'NO'}"
               f" | max_dd={max_dd*100:.0f}% ===")
 
     # ── Candle caches ──────────────────────────────────────
@@ -664,32 +627,15 @@ def main():
             last_signal_t = now
             global_bar   += 1
 
-            # Refresh equity = cash + unrealised position value
-            # CRITICAL: never compare cash-only to peak — positions are deployed capital
+            # Refresh balance
             try:
-                cash = api.fetch_balance()
-                if equity_cap > 0: cash = min(cash, equity_cap)
-                if paper_mode:
-                    cash = state._paper_cash
-
-                # Add unrealised value of all open positions
-                unrealised = 0.0
-                for sym, pos in list(state.positions.items()):
-                    try:
-                        cur_price = api.fetch_price(sym)
-                        if cur_price > 0:
-                            unrealised += cur_price * pos["qty"]
-                        else:
-                            unrealised += pos["size_usd"]  # fallback: use cost basis
-                    except Exception:
-                        unrealised += pos["size_usd"]  # fallback: use cost basis
-
-                total_equity = cash + unrealised
-                state.equity = total_equity
-                if total_equity > state.peak: state.peak = total_equity
+                balance = api.fetch_balance()
+                if equity_cap > 0: balance = min(balance, equity_cap)
+                state.equity = balance
+                if balance > state.peak: state.peak = balance
                 state._save()
             except Exception as e:
-                state.log(f"WARNING: Equity refresh failed: {e}")
+                state.log(f"WARNING: Balance refresh failed: {e}")
 
             # Drawdown kill switch
             if state.peak > 0:
@@ -725,10 +671,6 @@ def main():
                     cache_5m[sym] = c5
                     ind5m = compute_indicators(c5)
                     if not ind5m: continue
-                    if ind5m["price"] <= 0.0000001:
-                        # Pair returning zero prices — likely unavailable on Kraken
-                        # Skip silently to avoid bad signals and division by zero
-                        continue
 
                     # Get confirmed regime from 15m
                     ind15m = compute_indicators(cache_15m.get(sym, []))
@@ -750,7 +692,6 @@ def main():
                             pnl   = (price - pos["entry_price"]) * qty
                             try: api.market_sell(sym, qty)
                             except Exception as e: state.log(f"SELL ERR {label}: {e}")
-                            if paper_mode: state._paper_cash += pos["size_usd"] + pnl
                             state.record_trade(pnl > 0, pnl)
                             state.log_trade(sym, "SELL", price, qty, pnl,
                                             "BEAR_REGIME_EXIT", pos["bars_held"])
@@ -768,7 +709,6 @@ def main():
                             pnl   = (price - pos["entry_price"]) * qty
                             try: api.market_sell(sym, qty)
                             except Exception as e: state.log(f"SELL ERR {label}: {e}")
-                            if paper_mode: state._paper_cash += pos["size_usd"] + pnl
                             state.record_trade(pnl > 0, pnl)
                             state.log_trade(sym, "SELL", price, qty, pnl,
                                             "ZOMBIE_KILL_48H", pos["bars_held"])
@@ -786,7 +726,6 @@ def main():
                             pnl = (price - pos["entry_price"]) * qty
                             try: api.market_sell(sym, qty)
                             except Exception as e: state.log(f"SELL ERR {label}: {e}")
-                            if paper_mode: state._paper_cash += pos["size_usd"] + pnl
                             state.record_trade(pnl > 0, pnl)
                             state.log_trade(sym, "SELL", price, qty, pnl,
                                             reason, pos["bars_held"])
@@ -829,13 +768,6 @@ def main():
                     if size_usd < 2.0: continue
 
                     price = ind5m["price"]
-
-                    # Guard: skip if price is zero or suspiciously small
-                    # (indicates Kraken returned no data for this pair)
-                    if price <= 0.0000001:
-                        state.log(f"SKIP {label}: price={price} — pair may be unavailable on Kraken")
-                        continue
-
                     qty   = size_usd / price
 
                     # Place order
@@ -847,14 +779,11 @@ def main():
 
                     idle_note = (f" [IDLE_GUARD {(global_bar - state.last_entry_bar)//12:.0f}h flat]"
                                  if sig["idle_guard"] else "")
-                    # Dynamic decimal places: micro-priced tokens need more precision
-                    price_fmt = f"{price:.8f}".rstrip('0').rstrip('.')
                     state.log(f"ENTRY {label} {sig['signal']}"
-                               f" price={price_fmt} size=${size_usd:.2f}"
+                               f" price={price:.4f} size=${size_usd:.2f}"
                                f" qty={qty:.6f} txid={txid}{idle_note}")
                     state.log_trade(sym, "BUY", price, qty, 0.0, sig["signal"], 0)
 
-                    if paper_mode: state._paper_cash -= size_usd
                     state.positions[sym] = {
                         "sym":         sym,
                         "entry_price": price,
