@@ -1,0 +1,47 @@
+Act as an expert Python algorithmic trading developer specializing in Smart Money Concepts (SMC) and Market Structure Shift (MSS) strategies. I need you to build a complete, production-ready trading bot for the 15-minute (15m) timeframe based on a highly specific sequence of liquidity sweeps and structural shifts. 
+
+Do not give me code snippets. Write the entire program with all logic, definitions, and helper functions included.
+
+Here is the exact algorithmic blueprint based on a successful BTC/USD 15m structural trade:
+
+### 1. CORE LOGICAL COMPONENTS
+The bot must evaluate market structure strictly in the following chronological sequence:
+1. Trend Exhaustion (Minimum 5-wave impulse or extended bearish expansion).
+2. Institutional Liquidity Sweep (The "Trap" / Stop-Hunt).
+3. Minor Change of Character (CHoCH) on the 15m chart.
+4. Return to Discount / Order Block Mitigation (The Entry Criteria).
+
+### 2. DETECTION LINE & STEP-BY-STEP LOGIC
+
+#### Step 1: Identify Range & Trend Exhaustion
+* Monitor a trailing lookback window (e.g., 50 to 100 candles) to define the current operational Trading Range (Absolute High and Absolute Low).
+* The asset must be coming off a prolonged downtrend or a clear 5-wave Elliott bearish expansion sequence, establishing a baseline of heavy retail short bias.
+
+#### Step 2: The Liquidity Sweep (The Trigger Event)
+* The bot must detect a sudden, violent downward expansion that clears the previously established minor swing lows or range lows. 
+* This must present as a clear "wick sweep" or a sharp stop-hunt—capturing sell-side liquidity before an immediate, aggressive reversal.
+* **Mark this absolute wick low as the Validated Swing Low.** This is the ultimate line of invalidation.
+
+#### Step 3: Change of Character (CHoCH) & Displacement
+* Immediately following the liquidity sweep, price must aggressively displace upward, closing above the recent minor swing high (the lower high that led to the sweep).
+* This confirms a bullish Change of Character (CHoCH). 
+* **Crucial Rule:** Do NOT buy the close of this breakout candle. If the bot market-buys here, it fails. This candle is used purely to map the framework.
+
+#### Step 4: Map Imbalances & Target Reaction Zones
+* Once CHoCH is confirmed by the closing candle, the bot must immediately calculate:
+  1. The Fair Value Gaps (FVG) or Unchallenged Imbalances left behind by the aggressive upward displacement candle.
+  2. The Golden Pocket / Optimal Trade Entry (OTE) zone, defined as the 0.618 to 0.786 Fibonacci retracement levels drawn from the *Validated Swing Low* to the *Displacement Peak*.
+
+#### Step 5: Execution Math & Risk Management (The Entry)
+* The bot will NOT use market orders. It must calculate an entry using a Limit Buy order placed at the top of the identified 15m FVG or the 0.618 Fibonacci level.
+* **Stop Loss (SL):** Placed strictly 0.1% to 0.5% below the *Validated Swing Low* established during the Step 2 liquidity sweep.
+* **Take Profit (TP):** Targeted directly at the opposing internal range high liquidity pool (the high formed prior to the CHoCH displacement sequence).
+* **Mathematical Filter:** Before placing the orders, the bot must verify the Risk-to-Reward (R:R) profile. If the distance from the Limit Entry to the TP target does not yield at least a **1:3 R:R** relative to the SL distance, the entire setup is discarded.
+
+### 3. CODE STRUCTURE REQUIREMENT
+Please write a complete Python class `MarketStructureV2Bot` that contains:
+* Data ingestion placeholder processing standard Pandas DataFrames (open, high, low, close, volume).
+* Modular methods for `_detect_liquidity_sweep`, `_find_choch`, `_calculate_fib_levels`, and `_validate_risk_reward`.
+* A main execution loop function that accepts a coin ticker and returns a structured dictionary containing trade status, exact execution limits (Entry, SL, TP), and technical context logs.
+
+Remember: No snippets. Rewrite the entire program.

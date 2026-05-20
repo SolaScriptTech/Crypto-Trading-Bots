@@ -1,0 +1,23 @@
+Strategy For Bot 1 and Bot 2
+
+Bot #1 (Entry Positioning BOT): Suggests Long or Short, Entry price, Lot Size, and Risk. Calculates Stop Loss and Take Profit Positions
+-Entry in the middle of the most recent FVG following a CHOC and newest BOS
+-Determines Buy or Sell based on the trend resulting from the last recent CHOC that followed a trend that had at least 5 wave patterns including at least two touches (Liquidity Inflection Levels)
+-Set Take Profit 1:4
+-Targeting the 15 draw in liquidity
+-Stop Loss is to be placed at the bottom of the FVG that was entered on.
+-Bot is to ask for the entry price and the Risk, then calculates the lot size and asks for SL and TP multipliers.
+-Once all data is put in then it asks for confirmation
+-Upon recieving confirmation executes order placing both SL and TP with entry position and buy or sell order
+  
+Bot #2 (Signal Filtration Bot): Finds Specific Trading Patterns Using 15 minute and 5 minute timeframes
+-Find and report zones of support and resistance
+-Identify trends and reversal points, reporting the number of touches in the most recent trend line (Liquidity Inflection Levels)
+-Find all Fair Value Gaps (FVG), going back three days, highlighting unchallenged and most recent FVG
+-Make note of zones of importance
+-Identify Liquidity Pockets, where the price "snaps back" are. The "ceiling" where heavy sell orders sit. The floor, this is where the "bottom" is and the breakdown target usually finds support. Buyers are defending this level.
+-Look for recent failures to breakthrough highs and lows
+-Find the most recent breaks of structure (BOS)
+-Find Change of Character (CHOC)
+-After the most recent CHOC has been identified look for the first BOS and then a swing point. Where there is a low, a lower high, and lower low
+-Report the most recent CHOC that follows at least 5 wave patterns in the same trend line

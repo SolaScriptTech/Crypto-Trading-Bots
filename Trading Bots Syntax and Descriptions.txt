@@ -1,0 +1,178 @@
+     ************************************************
+     *---------TRADIFY CRYPTO TRADING BOTS----------*
+     ************************************************
+  ________________________________________________________
+ {## bot2.py — Signal Filtration & Trade Recommendation ##}
+  ========================================================
+
+Analyzes a symbol on two timeframes, prints a TRADE/NO TRADE recommendation,
+and opens an interactive chart in the browser.
+
+python bot2.py SYMBOL [options]
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `SYMBOL` | str (positional) | required | Trading pair, e.g. `BTC/USD`, `TRUMP/USD` |
+| `--strategy` | `fvg` \| `trendline` \| `both` | `both` | Which strategy to evaluate |
+| `--tf-high` | str | `15m` | Higher timeframe (e.g. `15m`, `30m`, `1h`) |
+| `--tf-low` | str | `5m` | Lower timeframe (e.g. `5m`, `1m`) |
+| `--candles-15m` | int | `288` | # of higher-TF candles to pull (max ~720) |
+| `--candles-5m` | int | `720` | # of lower-TF candles to pull (max ~720) |
+| `--json PATH` | path | none | Also write structured JSON to PATH |
+| `--no-chart` | flag | off | Skip rendering and opening the browser chart |
+| `--chart-out PATH` | path | `<symbol>.html` | Where to save the chart HTML |
+
+  _________________
+ | **Strategies:** |
+  =================
+
+- **fvg** — Mean-reversion. Requires ≥5 waves before CHOC, post-CHOC BOS, ≥2 trendline touches, and a fresh same-side FVG. Enter at FVG mid, SL at FVG bottom, TP 1:4.
+- **trendline** — Trend continuation. Requires post-CHOC BOS, ≥2 trendline touches, and ≤3 waves since CHOC (only catches fresh trends). Enter at trendline projection, SL beyond last opposite swing, TP 1:4.
+
+  _______________ 
+ | **Examples:** |
+  ===============
+
+python bot2.py BTC/USD
+python bot2.py TRUMP/USD --strategy fvg
+python bot2.py TRUMP/USD --tf-high 15m --tf-low 1m --candles-5m 720
+python bot2.py ETH/USD --json eth.json --no-chart
+
+  ________________________________________________
+ { ## scan_live.py — Multi-Symbol Live Scanner ## }
+  ================================================
+  
+Scans a list of symbols and records every TRADE signal (15m+5m must agree) to a
+timestamped JSON file. Used for forward-test recording.
+
+python scan_live.py [options]
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--symbols` | list | all 24 mapped pairs | Symbols to scan |
+| `--target` | int | `10` | Stop after this many agreeing signals |
+| `--candles-15m` | int | `288` | # of higher-TF candles |
+| `--candles-5m` | int | `720` | # of lower-TF candles |
+| `--out PATH` | path | `signals_<UTC>.json` | Output JSON path |
+| `--strategy` | `fvg` \| `trendline` \| `both` | `both` | Which strategies to record |
+
+_______________ 
+ **Examples:**
+===============
+
+python scan_live.py
+python scan_live.py --target 5 --symbols BTC/USD ETH/USD SOL/USD
+python scan_live.py --strategy fvg --symbols LTC/USD ADA/USD
+
+  ____________________________________________________________
+ { ## grade_signals.py — Score Previously Recorded Signals ## }
+  ============================================================
+
+Reads a `signals_*.json` produced by `scan_live.py`, pulls 15m candles since
+each signal's anchor time, simulates fill/SL/TP using the same logic as the
+backtester, and prints win/loss stats. Writes `<signals>.graded.json`.
+
+python grade_signals.py SIGNALS_FILE
+
+| Arg | Description |
+|---|---|
+| `SIGNALS_FILE` | Path to a `signals_*.json` (positional, required) |
+
+_______________ 
+ **Examples:**
+===============
+
+python grade_signals.py signals_20260512T153624Z.json
+
+  _____________________________________________
+ { ## backtest.py — Walk-Forward Backtester ## }
+  =============================================
+
+For each symbol: walks bar-by-bar through history, re-running the bot's
+recommendation logic on data available up to each point (no lookahead). Applies
+ladder logic — up to 3 entries per trend, each requiring a new BOS, with risk
+fractions [1.0, 0.5, 0.25].
+
+python backtest.py [options]
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--symbols` | list | 10 majors | Symbols to backtest |
+| `--candles-15m` | int | `288` | # of 15m candles per symbol |
+| `--candles-5m` | int | `720` | # of 5m candles per symbol |
+| `--out PATH` | path | `backtest_trades.csv` | Per-trade CSV ledger |
+| `--strategy` | `fvg` \| `trendline` \| `both` | `both` | Which strategies to test |
+
+_______________ 
+ **Examples:**
+===============
+
+python backtest.py
+python backtest.py --strategy fvg --symbols BTC/USD ETH/USD
+python backtest.py --out fvg_only.csv --strategy fvg
+
+  _________________________________________________
+ { ## bot2_chart.py — Standalone Chart Renderer ## }
+  =================================================
+
+Renders an interactive Plotly chart without printing the text report. `bot2.py`
+calls this internally, but you can run it solo.
+
+python bot2_chart.py SYMBOL [options]
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `SYMBOL` | str | required | Trading pair |
+| `--out PATH` | path | `<symbol>.html` | HTML output path |
+| `--candles-15m` | int | `288` | # of 15m candles |
+| `--candles-5m` | int | `720` | # of 5m candles |
+| `--open` | flag | off | Open the chart in browser when done |
+
+  ______________________________________________
+ { ## bot1.py — Entry Order Executor [Bot 1] ## }
+  ==============================================
+
+Interactive prompt-based order builder. Asks for symbol, side, entry, risk,
+SL/TP multipliers, then submits the bracket order. **Not integrated with the
+Bot 2 signals yet — manual workflow.**
+
+python bot1.py [--live]
+
+| Flag | Description |
+|---|---|
+| `--live` | Actually submits the order on confirmation. Without this, dry-run only. |
+
+  ____________________________________________________________
+ { ## candles.py — Direct Candle Fetcher [utility / debug] ## }
+  ============================================================
+
+python candles.py SYMBOL TIMEFRAME COUNT
+_______________ 
+ **Examples:**
+===============
+
+python candles.py BTC/USD 1h 100
+python candles.py TRUMP/USD 5m 50
+
+Supported timeframes: `1m`, `5m`, `15m`, `30m`, `1h`, `4h`, `1d`, `1w`, `15d`.
+
+Supported symbols (Kraken-mapped): BTC, ETH, DOGE, LTC, XMR, SOL, ADA, AVAX,
+LINK, DOT, POL, TRUMP, SHIB, XRP, ATOM, NEAR, FIL, AAVE, UNI, APT, ARB, OP,
+INJ, SUI — all paired with USD.
+
+  ________________________
+ { ## Typical Workflow ## }
+  ========================
+
+# 1. Check a single coin right now
+python bot2.py TRUMP/USD
+
+# 2. Scan many coins, record live signals for forward testing
+python scan_live.py --symbols BTC/USD ETH/USD SOL/USD LTC/USD ADA/USD
+
+# 3. Wait 24-48h, then grade the recorded signals
+python grade_signals.py signals_20260512T153624Z.json
+
+# 4. Test the strategy across history to refine rules
+python backtest.py --strategy both
+```
