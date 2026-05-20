@@ -1,140 +1,163 @@
-# Prop Bot System — Setup & Deployment Guide
+# Breakout Advisor — Installation & Usage
 
-Multi-strategy trading bot system designed to pass a prop firm evaluation:
-- **Profit target**: 3–7% over 90 days (bot aims for 5%, locks down at 6%)
-- **Max drawdown**: 15% hard limit (bot halts at 12% as safety buffer)
+Interactive advisor for passing the Breakout Prop 1-step evaluation. Uses your
+existing Lv1/Lv2/Lv3/RME intelligence stack for signal analysis and exit
+recommendations; you execute manually on Breakout Terminal.
 
----
+## Files in this bundle
 
-## File Structure
+| File | Purpose |
+|------|---------|
+| `advisor.py` | Main interactive REPL (~900 lines) |
+| `advisor_state.py` | Persistent state at `~/.breakout_advisor/state.json` |
+| `advisor_notify.py` | ntfy client lifted from `kraken_bull_bot_v8_1` |
+| `wedge_detector.py` | Rising/falling wedge pattern recognition |
+| `position_sizer.py` | Breakout-native sizer (daily + max DD constraints) |
+| `Lv3_quant_trader.py` | **Your Lv3 with collision bugs fixed** — REVIEW DIFF before replacing your prod copy |
+
+## Prerequisites
+
+- Python 3.9+
+- `pip install ccxt requests` (pandas/pandas_ta not needed — advisor uses pure-Python indicators)
+- Your existing `Lv1_quant_trader.py`, `Lv2_quant_trader.py`, `RiskEngine_quant_trader.py` (unchanged) in the same directory as `advisor.py`
+- **Replace** your `Lv3_quant_trader.py` with the patched version in this bundle (see "Lv3 changes" below)
+
+## Deployment
+
+Drop all files in one directory on your EC2 or local machine:
 
 ```
-prop_bot_system/
-├── config.py            ← All parameters (edit this, not the bot)
-├── risk_manager.py      ← Prop firm risk controls
-├── prop_bot_system.py   ← Main bot (run this)
-├── backtest.py          ← Offline validator
-└── README.md
+quant_trader/
+├── advisor.py                    # NEW
+├── advisor_state.py              # NEW
+├── advisor_notify.py             # NEW
+├── wedge_detector.py             # NEW
+├── position_sizer.py             # NEW
+├── Lv1_quant_trader.py           # existing — unchanged
+├── Lv2_quant_trader.py           # existing — unchanged
+├── Lv3_quant_trader.py           # REPLACE with patched version
+├── RiskEngine_quant_trader.py    # existing — unchanged
+└── (your existing bots continue to live here)
 ```
 
----
+Run:
 
-## Quick Start
-
-### 1. Install dependencies
 ```bash
-pip install ccxt[pro] pandas pandas_ta
+python3 advisor.py
 ```
 
-### 2. Set Kraken API keys
-```bash
-export KRAKEN_API_KEY="your_key"
-export KRAKEN_SECRET="your_secret"
-```
-Or add directly to `prop_bot_system.py` in the `ccxtpro.kraken({...})` call:
+Add `--debug` for tracebacks on errors during development.
+
+## Lv3 changes — review before replacing
+
+Your original `Lv3_quant_trader.py` had a `**base` collision bug: seven
+`_check_*` functions took `adx`, `rsi`, `vol_ratio`, `mfi`, `bb_pct_b` as
+both positional arguments AND via `**base` kwargs, causing
+`"got multiple values for argument 'adx'"` TypeErrors on every scan.
+
+The patched version removes those indicators from the positional parameter
+lists and pulls them from `**kwargs` inside each function body:
+
 ```python
-self.exchange = ccxtpro.kraken({
-    "apiKey":  "your_key",
-    "secret":  "your_secret",
-    "enableRateLimit": True,
-})
+# Before
+def _check_reversal_long(self, closes, highs, lows, volumes,
+                         rsi, adx, vol_ratio,
+                         rsi_floor, vol_min, **kwargs):
+
+# After
+def _check_reversal_long(self, closes, highs, lows, volumes,
+                         rsi_floor, vol_min, **kwargs):
+    rsi = kwargs.get("rsi")
+    adx = kwargs.get("adx")
+    vol_ratio = kwargs.get("vol_ratio", 1.0)
 ```
 
-### 3. Backtest first (always)
+Same pattern applied to: `_check_macd_cross`, `_check_zero_line_cross`,
+`_check_bb_mean_rev`, `_check_breakout`, `_check_macd_bear_cross`,
+`_check_bb_upper_reject`, `_check_reversal_short`.
+
+The base dict in `SignalRouter.route()` is unchanged. The call sites are
+simplified to remove redundant positional passes.
+
+**If you're currently running a bot against this Lv3, test in paper first.**
+The fix is mechanical — the logic of the checks is untouched — but anything
+that touches live orders deserves a paper session before you trust it.
+
+## Commands
+
+Type `?` at the prompt for the full command list. Key ones:
+
+- **`scan`** — asks for symbol + equity + current price, runs the full Lv1→Lv2→Lv3 pipeline against Kraken data, returns entry verdict with size, stop, TP, and wedge analysis
+- **`track`** — register a position you opened manually on Breakout Terminal. Asks for side, entry, size, stop, TP. Persists to disk.
+- **`exit`** — asks current price, runs the RME wave model against your tracked position, returns CLOSE/TIGHTEN/HOLD with adaptive detail
+- **`update`** — modify stop/TP/size on an existing tracked position
+- **`close`** — mark position as closed, update equity from Breakout Terminal
+- **`status`** — full dashboard: equity, daily budget, DD floor, open positions, cooldowns
+- **`size`** — standalone sizer: "how much can I risk given current state?"
+- **`wedge`** — dedicated wedge pattern scan (select 1h/4h/1d timeframe)
+- **`equity`** — update your current equity when it drifts from Breakout Terminal
+
+## Form-input conventions
+
+- Brackets `[default]` show the remembered value — press Enter to keep it
+- Type `q` at any prompt to abort the current command
+- `$5,000` / `5000` / `5_000` all parse as `5000`
+- `BTC` auto-completes to `BTC/USD`
+- Type `quit` at the main prompt to save state and exit
+
+## Eval settings (defaults)
+
+Defaults are set to Breakout 1-step:
+- Daily limit: 4% (resets 00:30 UTC)
+- Max drawdown: 6% static (from $5,000 starting balance = $4,700 floor)
+
+If you bought the 2-step instead, edit `~/.breakout_advisor/state.json`
+after first run:
+```json
+"eval": {
+  "daily_limit_pct": 5.0,
+  "max_drawdown_pct": 8.0,
+  "drawdown_type": "trailing"
+}
+```
+
+## First-run checklist
+
+1. Copy all files to your working directory
+2. Replace Lv3 with the patched version (review diff first)
+3. Run `python3 advisor.py` — it creates `~/.breakout_advisor/state.json` with defaults
+4. Type `equity` to set your starting equity
+5. Type `scan BTC/USD` to verify the pipeline runs end-to-end
+6. Once you open a position on Breakout Terminal, type `track` to register it
+7. Every time you're considering an exit, type `exit` and feed it the current price
+8. Type `status` anytime to see daily budget and DD room
+
+## Known limitations
+
+- **Watch mode is a stub.** `--watch` doesn't start a background monitor yet.
+  Add that in a second session once the interactive flow feels right.
+- **Peak equity drift.** If you close a winning position on Breakout Terminal
+  but forget to `close` in the advisor, the peak won't update. Run `equity`
+  periodically to resync.
+- **Kraken data ≠ Breakout data.** The advisor scans Kraken spot as the
+  proxy market. Prices are close but not identical. For critical entry/exit
+  decisions, verify the level on Breakout Terminal itself.
+- **No API trading.** By design. Breakout doesn't allow it; this tool is
+  decision support, not execution.
+
+## ntfy setup
+
+The default topic is `quant-crystal-ball` (same as v8.1). Subscribe once
+in your phone's ntfy app. Priority-max alerts bypass Do Not Disturb, which
+is intentional for exit triggers.
+
+Test from terminal:
 ```bash
-python3 backtest.py --days 90 --equity 10000
-```
-Check that output shows ✅ PASS on both metrics before going live.
-
-### 4. Deploy in tmux
-```bash
-tmux new -s prop_bot
-python3 prop_bot_system.py
-```
-Detach: `Ctrl+B D` | Re-attach: `tmux attach -t prop_bot`
-
----
-
-## Monitoring
-
-```bash
-# Live log
-tail -f prop_events.log
-
-# Trade history
-cat prop_audit.csv
-
-# Current state
-python3 -c "import json; d=json.load(open('prop_state.json')); print(json.dumps(d['risk_status'], indent=2))"
+python3 advisor_notify.py "Test message"
 ```
 
----
+## Emergency
 
-## Emergency Stop
-
-```bash
-touch EMERGENCY_STOP
-```
-Bot detects the file on the next loop, closes all positions, and exits cleanly.
-Remove the file before restarting: `rm EMERGENCY_STOP`
-
----
-
-## Strategies
-
-| Bot | Signal | Regime | Entry Gate |
-|-----|--------|--------|-----------|
-| TREND_FOLLOW | MACD slow crossover (12,26,9) | BULL + NEUTRAL | ADX ≥ 25, vol ≥ 1.5× |
-| TREND_FOLLOW | MACD fast crossover (5,10,16) | BULL + NEUTRAL | ADX ≥ 25, histogram ≥ 0.0002 |
-| MOMENTUM | Zero-line cross (12,26,90) | BULL only | ADX ≥ 22 |
-| MEAN_REVERSION | BB lower band touch | NEUTRAL only | ADX < 28, RSI < 40 |
-| BEAR_SHORT | MACD bear crossover | BEAR only | RSI ≥ 40 |
-| BEAR_SHORT | BB upper rejection | BEAR only | RSI ≥ 60 |
-
----
-
-## Risk Architecture
-
-```
-Per trade:    never risk > 0.8% of account
-Hard stop:    3% loss on longs, 1.5% on shorts  
-Daily loss:   halt at 1.5% daily loss (resumes next UTC day)
-Drawdown:     halt at 12% total DD (buffer before 15% prop limit)
-Profit lock:  at 6% profit, all position sizes cut 50%
-Dry powder:   always keep 20% in cash
-Max positions: 4 concurrent
-Cooldown:     3h per pair after any exit
-```
-
----
-
-## Prop Firm Parameters Explained
-
-The 90-day evaluation window requires **consistency**, not aggression:
-
-- **Why 5% target, not 7%?**  
-  Aiming for 7% creates pressure to overtrade in unfavorable conditions.
-  5% is achievable at ~0.055%/day with only 3–4 trades per week.
-
-- **Why halt at 12% DD, not 15%?**  
-  A 3% buffer absorbs slippage, spread, and overnight gaps so the bot
-  never accidentally triggers the prop firm's hard limit.
-
-- **Why the profit lock at 6%?**  
-  Once you're in profit, capital preservation becomes the primary goal.
-  Half sizing means the bot can still trade but can't blow the account
-  on a late-stage losing streak.
-
----
-
-## Tuning After Backtest
-
-If backtest shows PnL too low (< 3%):
-- Lower `MIN_CONVICTION` from 62 → 58
-- Lower `ADX_MIN_TREND` from 25 → 22
-- Lower `VOL_RATIO_MIN` from 1.5 → 1.3
-
-If backtest shows drawdown too high (> 12%):
-- Raise `HARD_STOP_PCT` from 3% → 2.5%
-- Lower `SIZE_HIGH_PCT` from 20% → 15%
-- Raise `MIN_CONVICTION` from 62 → 65
+There's no `EMERGENCY_STOP` file handling in the advisor because the
+advisor doesn't execute trades. The only thing to "stop" is the REPL:
+`Ctrl-C` or type `quit`. Your state is saved.
