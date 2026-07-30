@@ -1,0 +1,11 @@
+aiohttp
+ccxt
+numpy
+pandas
+pandas-ta
+peewee
+python-dotenv
+pytz
+requests
+websockets
+yfinance
