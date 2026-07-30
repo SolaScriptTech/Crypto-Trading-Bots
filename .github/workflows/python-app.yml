@@ -27,4 +27,4 @@ jobs:
       - name: Verify repository hygiene
         run: |
           test ! -e .env
-          test -z "$(find . -type f \( -name '*.pyc' -o -name '*.pyo' \) -print -quit)"
+          test -z "$(git ls-files '*.pyc' '*.pyo')"
